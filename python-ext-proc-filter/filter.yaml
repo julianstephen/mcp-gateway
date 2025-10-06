@@ -1,0 +1,34 @@
+apiVersion: networking.istio.io/v1alpha3
+kind: EnvoyFilter
+metadata:
+  name: my-extproc-filter
+  namespace: istio-system
+spec:
+  workloadSelector:
+    labels:
+      istio: ingressgateway
+  configPatches:
+  - applyTo: HTTP_FILTER
+    match:
+      context: GATEWAY
+      listener:
+        port: 8080
+        filterChain:
+          filter:
+            name: "envoy.filters.network.http_connection_manager"
+    patch:
+      operation: INSERT_BEFORE
+      value:
+        name: envoy.filters.http.ext_proc
+        typed_config:
+          "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+          processing_mode:
+            request_header_mode: 'SEND'
+            response_header_mode: 'SEND'
+            request_body_mode: 'STREAMED'
+            response_body_mode: 'STREAMED'
+            request_trailer_mode: 'SKIP'
+            response_trailer_mode: 'SKIP'
+          grpc_service:
+            envoy_grpc:
+              cluster_name: outbound|50052||my-extproc-service.istio-system.svc.cluster.local

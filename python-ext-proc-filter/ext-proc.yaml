@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: my-extproc-service
+  namespace: istio-system
+spec:
+  selector:
+    app: my-extproc
+  ports:
+    - protocol: TCP
+      port: 50052
+      targetPort: 50052
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-extproc
+  namespace: istio-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: my-extproc
+  template:
+    metadata:
+      labels:
+        app: my-extproc
+    spec:
+      containers:
+        - name: my-extproc
+          # Built from Dockerfile: docker build -t ej-extproc-server:latest .
+          # Load onto kind cluster: kind load docker-image ej-extproc-server:latest --name mcp-gateway
+          image: my-ext-proc:0.1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 50052
