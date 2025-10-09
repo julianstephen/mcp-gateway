@@ -30,3 +30,6 @@ kubectl apply -f ext-proc.yaml
 kubectl apply -f filter.yaml 
 ```
 
+### Enable debug logs for mcp-gateway envoy routes if needed
+* From mcp-gateway folder: 
+`make debug-envoy-impl`
