@@ -17,7 +17,7 @@ git clone https://github.com/cncf/xds.git
 NOTE: This repo contains the python code for `validate, xds, udpa`. Go to folder python. Copy the needed folders or run
 setup.py to install.
 4. In the end you need `envoy, validate, xds, udpa` python protobufs folders copied into `src` to run example server.py
-
+5. Run `python server.py`
 
 ### Build docker image and add to cluster
 
