@@ -30,7 +30,7 @@ spec:
         - name: my-extproc
           # Built from Dockerfile: docker build -t ej-extproc-server:latest .
           # Load onto kind cluster: kind load docker-image ej-extproc-server:latest --name mcp-gateway
-          image: my-ext-proc:0.1.0
+          image: localhost/ej-extproc-server:latest
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50052

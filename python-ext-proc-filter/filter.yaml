@@ -12,7 +12,7 @@ spec:
     match:
       context: GATEWAY
       listener:
-        port: 8080
+        portNumber: 8080
         filterChain:
           filter:
             name: "envoy.filters.network.http_connection_manager"

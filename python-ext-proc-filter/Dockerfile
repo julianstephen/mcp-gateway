@@ -14,5 +14,5 @@ COPY src/ ./
 EXPOSE 50052
 
 # Run the server
-#CMD ["python", "server.py"]
-CMD ["tail", "-f", "/dev/null"]
+CMD ["python", "server.py"]
+# CMD ["tail", "-f", "/dev/null"]
