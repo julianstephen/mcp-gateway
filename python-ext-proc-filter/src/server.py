@@ -3,77 +3,142 @@ import asyncio
 import re
 import logging
 from typing import AsyncIterator
+from concurrent import futures
 
 import grpc
 from envoy.service.ext_proc.v3 import external_processor_pb2 as ep
 from envoy.service.ext_proc.v3 import external_processor_pb2_grpc as ep_grpc
+from envoy.config.core.v3 import base_pb2 as core
+
+
+# plugin manager
+import sys
+import json
+sys.path.append("/app/apex")
+
+# First-Party
+from apex.mcp.entities.models import HookType, Message, PromptResult, Role, TextContent, PromptPosthookPayload, PromptPrehookPayload
+from apex.framework.manager import PluginManager
+from apex.framework.models import GlobalContext
+from plugins.regex_filter.search_replace import SearchReplaceConfig
+
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("ext-proc-pii")
+logger = logging.getLogger("ext-proc-PM")
 
-# Regexes
-EMAIL_RE = re.compile(r"(?i)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b|\b\d{9}\b")
-
-def redact_text(s: str) -> str:
-    """Replace each match with same-length '*' characters, preserving length"""
-    if not EMAIL_RE.search(s) and not SSN_RE.search(s):
-        return s
-    def _star_match(m):
-        return "*" * len(m.group(0))
-    s = EMAIL_RE.sub(_star_match, s)
-    s = SSN_RE.sub(_star_match, s)
-    return s
-
-class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
-    """
-    One gRPC stream is created per HTTP transaction (Envoy opens a bidi stream).
-    We implement Process(stream) and handle messages as they arrive.
-    """
-
+class ExtProcServicer1(ep_grpc.ExternalProcessorServicer):
     async def Process(self, request_iterator: AsyncIterator[ep.ProcessingRequest], context) -> AsyncIterator[ep.ProcessingResponse]:
-        async for req in request_iterator:
+        req_body_buf = bytearray()
+        resp_body_buf = bytearray()
 
-            # ---- Request body chunk ----
-            if req.HasField("request_body") and req.request_body.body:
-                chunk = req.request_body.body
-                try:
-                    text = chunk.decode("utf-8")
-                except UnicodeDecodeError:
-                    # Binary or partial UTF-8 chunk; skip mutation
-                    continue
-                redacted = redact_text(text)
-                if redacted != text:
-                    body_resp = ep.ProcessingResponse(
-                        request_body=ep.BodyResponse(
-                            body=redacted.encode("utf-8"),
-                            body_mutation=ep.BodyResponse.BodyMutation(replace=True)
+        async for request in request_iterator:
+            logger.info(request)
+            if request.HasField("request_headers"):
+                # Modify request headers
+                headers = request.request_headers.headers
+                yield ep.ProcessingResponse(
+                    request_headers=ep.HeadersResponse(
+                        response=ep.CommonResponse(
+                            header_mutation=ep.HeaderMutation(
+                                set_headers=[
+                                    core.HeaderValueOption(
+                                        header=core.HeaderValue(
+                                            key="x-ext-proc-header", raw_value="hello-from-ext-proc".encode('utf-8')
+                                        ),
+                                        append_action=core.HeaderValueOption.APPEND_IF_EXISTS_OR_ADD
+                                    )
+                                ]
+                            )
                         )
                     )
-                    yield body_resp
-
-            # ---- Response body chunk ----
-            if req.HasField("response_body") and req.response_body.body:
-                chunk = req.response_body.body
-                try:
-                    text = chunk.decode("utf-8")
-                except UnicodeDecodeError:
-                    continue
-                redacted = redact_text(text)
-                if redacted != text:
-                    body_resp = ep.ProcessingResponse(
-                        response_body=ep.BodyResponse(
-                            body=redacted.encode("utf-8"),
-                            body_mutation=ep.BodyResponse.BodyMutation(replace=True)
+                )
+            elif request.HasField("response_headers"):
+                # Modify response headers
+                headers = request.response_headers.headers
+                yield ep.ProcessingResponse(
+                    response_headers=ep.HeadersResponse(
+                        response=ep.CommonResponse(
+                            header_mutation=ep.HeaderMutation(
+                                set_headers=[
+                                    core.HeaderValueOption(
+                                        header=core.HeaderValue(
+                                            key="x-ext-proc-response-header", raw_value="processed-by-ext-proc".encode('utf-8')
+                                        ),
+                                        append_action=core.HeaderValueOption.APPEND_IF_EXISTS_OR_ADD
+                                    )
+                                ]
+                            )
                         )
                     )
-                    yield body_resp
+                )
 
-        logger.debug("gRPC stream closed")
+            elif request.HasField("request_body") and request.request_body.body:
+                chunk = request.request_body.body
+                req_body_buf.extend(chunk)
+
+                if getattr(request.request_body, "end_of_stream", False):
+                    try:
+                        text = req_body_buf.decode("utf-8")
+                    except UnicodeDecodeError:
+                        logger.debug("Request body not UTF-8; skipping")
+                    else:
+                        logger.info(json.loads(text))
+                        body = json.loads(text)
+                        if 'method' in body and body['method'] == "tools/call":
+                            prompt = PromptPrehookPayload(name="test_prompt", args = body["params"]["arguments"])
+                            global_context = GlobalContext(request_id="1", server_id="2")
+                            result, contexts = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+                            print(result.modified_payload.args)
+                            body["params"]["arguments"] = result.modified_payload.args
+                            body_resp = ep.ProcessingResponse(
+                                request_body=ep.BodyResponse(
+                                    response=ep.CommonResponse(
+                                        body_mutation=ep.BodyMutation(
+                                            body=json.dumps(body).encode("utf-8")
+                                        )
+                                    )
+                                )
+                            )
+                        else:
+                            body_resp = ep.ProcessingResponse(
+                                request_body=ep.BodyResponse(
+                                    response=ep.CommonResponse()
+                                )
+                            )
+                        yield body_resp
+
+                    req_body_buf.clear()
+
+            # ---- Response body chunks ----
+            elif request.HasField("response_body") and request.response_body.body:
+                chunk = request.response_body.body
+                resp_body_buf.extend(chunk)
+
+                if getattr(request.response_body, "end_of_stream", False):
+                    try:
+                        text = resp_body_buf.decode("utf-8")
+                    except UnicodeDecodeError:
+                        logger.debug("Response body not UTF-8; skipping")
+                    else:
+                        body_resp = ep.ProcessingResponse(
+                            response_body=ep.BodyResponse(
+                                response=ep.CommonResponse()
+                            )
+                        )
+                        yield body_resp
+                    resp_body_buf.clear()
+
+            # Handle other message types (request_body, response_body, etc.) as needed
+            else:
+                logger.warn("Not processed")
 
 async def serve(host: str = "0.0.0.0", port: int = 50052):
+    await manager.initialize()
+    print(manager.config)
+
     server = grpc.aio.server()
-    ep_grpc.add_ExternalProcessorServicer_to_server(ExtProcServicer(), server)
+    #server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
+    ep_grpc.add_ExternalProcessorServicer_to_server(ExtProcServicer1(), server)
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)
     logger.info("Starting ext_proc MY server on %s", listen_addr)
@@ -83,7 +148,9 @@ async def serve(host: str = "0.0.0.0", port: int = 50052):
 
 if __name__ == "__main__":
     try:
+        manager = PluginManager("./apex/resources/config/config.yaml")
         asyncio.run(serve())
+        #serve()
     except KeyboardInterrupt:
         logger.info("Shutting down")
 

@@ -22,6 +22,9 @@ spec:
         name: envoy.filters.http.ext_proc
         typed_config:
           "@type": type.googleapis.com/envoy.extensions.filters.http.ext_proc.v3.ExternalProcessor
+          failure_mode_allow: false
+          mutation_rules:
+            allow_all_routing: true
           processing_mode:
             request_header_mode: 'SEND'
             response_header_mode: 'SEND'

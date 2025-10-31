@@ -7,9 +7,9 @@ pip install grpcio-tools
 pip install betterproto2_compiler
 ```
 2. Build the python `envoy` protobufs
-- Code to help pull and build the python code from proto files: https://github.com/cetanu/envoy_data_plane.git
-- Run: python utils/download_protobufs.py
-NOTE: This will build the envoy proto in src/envoy_data_plane_pb2. Copy the src/envoy_data_plane_pb2/envoy to where you need it. 
+- Code to help pull and build the python code from proto files: https://github.com/cetanu/envoy\_data\_plane.git
+- Run: python utils/download\_protobufs.py
+NOTE: This will build the envoy proto in src/envoy\_data\_plane\_pb2. Copy the src/envoy\_data\_plane\_pb2/envoy to where you need it. 
 3. Get the python xds protobufs:
 ```
 git clone https://github.com/cncf/xds.git
@@ -33,3 +33,10 @@ kubectl apply -f filter.yaml
 ### Enable debug logs for mcp-gateway envoy routes if needed
 * From mcp-gateway folder: 
 `make debug-envoy-impl`
+
+
+### Use with CF Plugin Manager
+1. git clone https://github.ibm.com/security-foundation-models/apex.git into python-ext-proc-filter/src/
+2. src/server.py is the grpc server and intergates CF Plugin Manager. It initializes the Plugin Manager using the
+config.yaml in python-ext-proc-filter/src/apex/resouces/config/config.yaml.
+3. Use Dockerfile to build and push ext\_proc into kind cluster. Use Makefile for some shortcuts.
