@@ -16,13 +16,13 @@ spec:
       authentication:
         'keycloak':
           jwt:
-            issuerUrl: http://keycloak.keycloak.svc.cluster.local/realms/mcp
+            issuerUrl: http://keycloak.127-0-0-1.sslip.io:8889/realms/mcp
       authorization:
         'allow-tool-list':
           patternMatching:
             patterns:
               - predicate: size(auth.identity.groups) >=0
-              - predicate: request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"] # add method header
+              - predicate: request.headers['x-mcp-method'] in ["tools/list","initialize","notifications/initialized"] # check method header
       response:
         unauthorized:
           code: 401

@@ -17,7 +17,7 @@ spec:
           from: All
     - name: keycloak
       hostname: 'keycloak.127-0-0-1.sslip.io'
-      port: 8081
+      port: 8889
       protocol: HTTP
       allowedRoutes:
         namespaces:
@@ -48,6 +48,13 @@ spec:
           from: All
     - name: mcp-api-key-server-route-ext
       hostname: 'api-key-server.127-0-0-1.sslip.io'
+      port: 8080
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: All
+    - name: mcp-oidc-server-route-ext
+      hostname: 'oidc-server.127-0-0-1.sslip.io'
       port: 8080
       protocol: HTTP
       allowedRoutes:

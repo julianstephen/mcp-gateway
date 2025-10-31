@@ -1,19 +1,41 @@
 #!/bin/bash
 
 # Sample local Helm setup script for MCP Gateway
-# This script can be run from any directory - it automatically resolves paths
-# relative to the repository root.
+# This script sets up a complete MCP Gateway environment using remote resources
 
 set -e
 
-# Get the directory of this script and the repository root
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Allow specifying a different GitHub org/user and branch via environment variables
+GITHUB_ORG=${MCP_GATEWAY_ORG:-kagenti}
+BRANCH=${MCP_GATEWAY_BRANCH:-main}
+USE_LOCAL_CHART=${USE_LOCAL_CHART:-false}
+echo "Using GitHub org: $GITHUB_ORG"
+echo "Using branch: $BRANCH"
+echo "Using local chart: $USE_LOCAL_CHART"
 
 echo "Setting up MCP Gateway using Helm chart..."
-echo "Repository root: $REPO_ROOT"
 
-kind create cluster --config "$REPO_ROOT/config/kind/cluster.yaml"
+# Create Kind cluster with inline configuration
+echo "Creating Kind cluster..."
+cat <<EOF | kind create cluster --config=-
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+- role: control-plane
+  kubeadmConfigPatches:
+  - |
+    kind: InitConfiguration
+    nodeRegistration:
+      kubeletExtraArgs:
+        node-labels: "ingress-ready=true"
+  extraPortMappings:
+  - containerPort: 80
+    hostPort: 8080
+    protocol: TCP
+  - containerPort: 443
+    hostPort: 8443
+    protocol: TCP
+EOF
 
 kubectl apply -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.0/standard-install.yaml
 
@@ -22,11 +44,27 @@ helm repo update
 helm install istio-base istio/base -n istio-system --create-namespace --wait
 helm install istiod istio/istiod -n istio-system --wait
 
-kubectl apply -k "$REPO_ROOT/config/istio/gateway"
-kubectl apply -k "$REPO_ROOT/config/test-servers"
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/gateway.yaml -n gateway-system
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/namespace.yaml
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-deployment.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-service.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-httproute.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-httproute-ext.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-deployment.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-service.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-httproute.yaml -n mcp-test
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server2-httproute-ext.yaml -n mcp-test
 
-helm install mcp-gateway "$REPO_ROOT/charts/mcp-gateway"
-kubectl apply -f "$REPO_ROOT/config/samples/mcpserver-test-servers.yaml"
+# Install MCP Gateway using either local chart or remote OCI chart
+if [ "$USE_LOCAL_CHART" = "true" ]; then
+    echo "Installing from local chart: ./charts/mcp-gateway/"
+    helm install mcp-gateway ./charts/mcp-gateway/ --create-namespace --namespace mcp-system
+else
+    echo "Installing from remote OCI chart: oci://ghcr.io/kagenti/charts/mcp-gateway"
+    helm install mcp-gateway oci://ghcr.io/kagenti/charts/mcp-gateway --create-namespace --namespace mcp-system
+fi
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/samples/mcpserver-test-servers.yaml
 
 cat <<EOF | kubectl apply -f -
 apiVersion: gateway.networking.k8s.io/v1
@@ -79,7 +117,7 @@ echo "Waiting for Istio gateway pod to be ready..."
 kubectl wait --for=condition=ready --timeout=300s pod -l istio=ingressgateway -n gateway-system
 
 echo "Starting port forwarding..."
-kubectl -n gateway-system port-forward svc/mcp-gateway-istio 8888:8080 8889:8081 &
+kubectl -n gateway-system port-forward svc/mcp-gateway-istio 8888:8080 8889:8889 &
 PORT_FORWARD_PID=$!
 
 echo "Starting MCP inspector..."

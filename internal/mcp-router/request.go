@@ -35,11 +35,15 @@ func (mr *MCPRequest) Validate() (bool, error) {
 	if mr.Method == "" {
 		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("no method set in json rpc payload"))
 	}
-	if mr.ID == nil {
-		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("no id set in json rpc payload"))
+	if mr.ID == nil && !mr.isNotificationRequest() {
+		return false, errors.Join(ErrInvalidRequest, fmt.Errorf("no id set in json rpc payload for none notification method: %s ", mr.Method))
 	}
 
 	return true, nil
+}
+
+func (mr *MCPRequest) isNotificationRequest() bool {
+	return strings.HasPrefix(mr.Method, "notifications")
 }
 
 // isToolCall will check if the request is a tool call request
@@ -69,7 +73,7 @@ func (mr *MCPRequest) ReWriteToolName(actualTool string) {
 	mr.Params["name"] = actualTool
 }
 
-// ToBytes mashels the data ready to send on
+// ToBytes marshals the data ready to send on
 func (mr *MCPRequest) ToBytes() ([]byte, error) {
 	return json.Marshal(mr)
 }
@@ -98,7 +102,7 @@ func (s *ExtProcServer) HandleMCPRequest(ctx context.Context, mcpReq *MCPRequest
 		slog.Error("[EXT-PROC] HandleRequestBody no tool name set in tools/call")
 		return append(calculatedResponse, s.createErrorResponse("no tool name set", 400))
 	}
-	headers.WithMCPToolName(toolName)
+
 	// TODO prefix here really is the the server id. It is confusing to think of it as both
 	slog.Debug("[EXT-PROC] HandleRequestBody", "Tool name:", toolName)
 	serverInfo := config.GetServerInfo(toolName)
@@ -107,8 +111,9 @@ func (s *ExtProcServer) HandleMCPRequest(ctx context.Context, mcpReq *MCPRequest
 		// todo should this be a 404??
 		return append(calculatedResponse, s.createErrorResponse("not found", 404))
 	}
-
-	mcpReq.ReWriteToolName(config.StripServerPrefix(toolName))
+	upstreamToolName := config.StripServerPrefix(toolName)
+	headers.WithMCPToolName(upstreamToolName)
+	mcpReq.ReWriteToolName(upstreamToolName)
 	slog.Info("Stripped tool name", "tool", mcpReq.ToolName())
 	headers.WithMCPServerName(serverInfo.Name)
 	// Get Helper session ID
@@ -135,9 +140,6 @@ func (s *ExtProcServer) HandleMCPRequest(ctx context.Context, mcpReq *MCPRequest
 	}
 
 	headers.WithAuthority(serverInfo.Hostname)
-	if serverInfo.Credential() != "" {
-		headers.WithAuth(serverInfo.Credential())
-	}
 
 	calculatedResponse, err := s.HeaderAndBodyResponse(headers, mcpReq)
 	if err != nil {
