@@ -9,6 +9,7 @@ import grpc
 from envoy.service.ext_proc.v3 import external_processor_pb2 as ep
 from envoy.service.ext_proc.v3 import external_processor_pb2_grpc as ep_grpc
 from envoy.config.core.v3 import base_pb2 as core
+from envoy.type.v3 import http_status_pb2 as http_status_pb2
 
 
 # plugin manager
@@ -17,7 +18,8 @@ import json
 sys.path.append("/app/apex")
 
 # First-Party
-from apex.mcp.entities.models import HookType, Message, PromptResult, Role, TextContent, PromptPosthookPayload, PromptPrehookPayload
+#from apex.mcp.entities.models import HookType, Message, PromptResult, Role, TextContent, PromptPosthookPayload, PromptPrehookPayload
+import apex.mcp.entities.models as apex
 from apex.framework.manager import PluginManager
 from apex.framework.models import GlobalContext
 from plugins.regex_filter.search_replace import SearchReplaceConfig
@@ -26,7 +28,88 @@ from plugins.regex_filter.search_replace import SearchReplaceConfig
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ext-proc-PM")
 
-class ExtProcServicer1(ep_grpc.ExternalProcessorServicer):
+async def getToolPostInvokeResponse(body):
+    #FIXME: size of content array is expected to be 1
+    #for content in body["result"]["content"]:
+    payload = apex.ToolPostInvokePayload(name="replaceme", result = body)
+    #TODO: hard-coded ids
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.invoke_hook(apex.HookType.TOOL_POST_INVOKE, payload, global_context=global_context)
+    logger.info(result)
+    if not result.continue_processing:
+        body_resp = ep.ProcessingResponse(
+            immediate_response=ep.ImmediateResponse(
+                #TODO: hard-coded error reason
+                status=http_status_pb2.HttpStatus(code = http_status_pb2.Forbidden),
+                details="No go"
+            )
+        )
+    else:
+        body = result.modified_payload.result
+        body_resp = ep.ProcessingResponse(
+            request_body=ep.BodyResponse(
+                response=ep.CommonResponse(
+                    body_mutation=ep.BodyMutation(
+                        body=json.dumps(body).encode("utf-8")
+                    )
+                )
+            )
+        )
+    return body_resp
+
+async def getToolPreInvokeResponse(body):
+    payload = apex.ToolPreInvokePayload(name=body["params"]["name"], args = body["params"]["arguments"])
+    #TODO: hard-coded ids
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.invoke_hook(apex.HookType.TOOL_PRE_INVOKE, payload, global_context=global_context)
+    logger.info(result)
+    if not result.continue_processing:
+        body_resp = ep.ProcessingResponse(
+            immediate_response=ep.ImmediateResponse(
+                status=http_status_pb2.HttpStatus(code = http_status_pb2.Forbidden),
+                details="No go"
+            )
+        )
+    else:
+        body["params"]["arguments"] = result.modified_payload.args
+        body_resp = ep.ProcessingResponse(
+            request_body=ep.BodyResponse(
+                response=ep.CommonResponse(
+                    body_mutation=ep.BodyMutation(
+                        body=json.dumps(body).encode("utf-8")
+                    )
+                )
+            )
+        )
+    return body_resp
+
+async def getPromptPreFetchResponse(body):
+    prompt = apex.PromptPrehookPayload(name=body["params"]["name"], args = body["params"]["arguments"])
+    #TODO: hard-coded ids
+    global_context = GlobalContext(request_id="1", server_id="2")
+    result, contexts = await manager.invoke_hook(apex.HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+    logger.info(result)
+    if not result.continue_processing:
+        body_resp = ep.ProcessingResponse(
+            immediate_response=ep.ImmediateResponse(
+                status=http_status_pb2.HttpStatus(code = http_status_pb2.Forbidden),
+                details="No go"
+            )
+        )
+    else:
+        body["params"]["arguments"] = result.modified_payload.args
+        body_resp = ep.ProcessingResponse(
+            request_body=ep.BodyResponse(
+                response=ep.CommonResponse(
+                    body_mutation=ep.BodyMutation(
+                        body=json.dumps(body).encode("utf-8")
+                    )
+                )
+            )
+        )
+    return body_resp
+
+class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
     async def Process(self, request_iterator: AsyncIterator[ep.ProcessingRequest], context) -> AsyncIterator[ep.ProcessingResponse]:
         req_body_buf = bytearray()
         resp_body_buf = bytearray()
@@ -85,20 +168,9 @@ class ExtProcServicer1(ep_grpc.ExternalProcessorServicer):
                         logger.info(json.loads(text))
                         body = json.loads(text)
                         if 'method' in body and body['method'] == "tools/call":
-                            prompt = PromptPrehookPayload(name="test_prompt", args = body["params"]["arguments"])
-                            global_context = GlobalContext(request_id="1", server_id="2")
-                            result, contexts = await manager.invoke_hook(HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
-                            print(result.modified_payload.args)
-                            body["params"]["arguments"] = result.modified_payload.args
-                            body_resp = ep.ProcessingResponse(
-                                request_body=ep.BodyResponse(
-                                    response=ep.CommonResponse(
-                                        body_mutation=ep.BodyMutation(
-                                            body=json.dumps(body).encode("utf-8")
-                                        )
-                                    )
-                                )
-                            )
+                            body_resp = await getToolPreInvokeResponse(body)
+                        elif 'method' in body and body['method'] == "prompts/get":
+                            body_resp = await getPromptPreFetchResponse(body)
                         else:
                             body_resp = ep.ProcessingResponse(
                                 request_body=ep.BodyResponse(
@@ -120,11 +192,20 @@ class ExtProcServicer1(ep_grpc.ExternalProcessorServicer):
                     except UnicodeDecodeError:
                         logger.debug("Response body not UTF-8; skipping")
                     else:
-                        body_resp = ep.ProcessingResponse(
-                            response_body=ep.BodyResponse(
-                                response=ep.CommonResponse()
+                        logger.info(text.split("\n"))
+                        #find data key
+                        data = [d for d in text.split("\n") if d.startswith("data:")]
+                        #logger.info(json.loads(data[0].strip("data:")))
+                        data = json.loads(data[0].strip("data:"))
+                        #TODO: check for tool call
+                        if 'result' in data:
+                            body_resp = await getToolPostInvokeResponse(data)
+                        else:
+                            body_resp = ep.ProcessingResponse(
+                                response_body=ep.BodyResponse(
+                                    response=ep.CommonResponse()
+                                )
                             )
-                        )
                         yield body_resp
                     resp_body_buf.clear()
 
@@ -138,7 +219,7 @@ async def serve(host: str = "0.0.0.0", port: int = 50052):
 
     server = grpc.aio.server()
     #server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    ep_grpc.add_ExternalProcessorServicer_to_server(ExtProcServicer1(), server)
+    ep_grpc.add_ExternalProcessorServicer_to_server(ExtProcServicer(), server)
     listen_addr = f"{host}:{port}"
     server.add_insecure_port(listen_addr)
     logger.info("Starting ext_proc MY server on %s", listen_addr)
