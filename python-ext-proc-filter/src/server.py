@@ -196,7 +196,8 @@ class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
                         #find data key
                         data = [d for d in text.split("\n") if d.startswith("data:")]
                         #logger.info(json.loads(data[0].strip("data:")))
-                        data = json.loads(data[0].strip("data:"))
+                        if data: #List can be empty
+                            data = json.loads(data[0].strip("data:"))
                         #TODO: check for tool call
                         if 'result' in data:
                             body_resp = await getToolPostInvokeResponse(data)

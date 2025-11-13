@@ -1,3 +1,6 @@
 grpcio>=1.75.0
 grpcio-tools>=1.75.0
 betterproto2
+
+
+nemoguardrails==0.17.0

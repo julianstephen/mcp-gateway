@@ -1,5 +1,5 @@
 # Super simple Dockerfile
-FROM python:3.12-slim
+FROM python:3.12.12
 #FROM envoy-extproc-sdk-python:latest
 
 COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
