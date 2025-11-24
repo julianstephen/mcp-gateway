@@ -215,8 +215,8 @@ class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
                 logger.warn("Not processed")
 
 async def serve(host: str = "0.0.0.0", port: int = 50052):
+    logger.info(manager.config)
     await manager.initialize()
-    print(manager.config)
 
     server = grpc.aio.server()
     #server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
@@ -230,6 +230,7 @@ async def serve(host: str = "0.0.0.0", port: int = 50052):
 
 if __name__ == "__main__":
     try:
+        logger.info("Manager main")
         manager = PluginManager("./apex/resources/config/config.yaml")
         asyncio.run(serve())
         #serve()
