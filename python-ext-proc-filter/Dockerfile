@@ -1,6 +1,12 @@
 # Super simple Dockerfile
-FROM python:3.12.12
+#FROM python:3.12.12
 #FROM envoy-extproc-sdk-python:latest
+FROM public.ecr.aws/docker/library/python:3.12.12-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && apt-get purge -y --auto-remove \
+    && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker.io/astral/uv:latest /uv /uvx /bin/
 
@@ -12,8 +18,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./
 
-RUN cd apex && uv pip install -r pyproject.toml --system
-RUN cd apex && uv pip install . --system
+# RUN cd apex && uv pip install -r pyproject.toml --system
+# RUN cd apex && uv pip install . --system
 
 # Expose the gRPC port
 EXPOSE 50052

@@ -32,13 +32,6 @@ spec:
           # Built from Dockerfile: docker build -t ej-extproc-server:latest .
           # Load onto kind cluster: kind load docker-image ej-extproc-server:latest --name mcp-gateway
           image: localhost/my-ext-proc:0.1.0
-          # command: ["bash", "-c","--"]
-          # args: ["while true; do sleep 3600; done"]
-#          imagePullPolicy: IfNotPresent
-          env:
-            - name: PLUGINS_SERVER_HOST
-              value: "0.0.0.0"
-            - name: LOGLEVEL
-              value: "DEBUG"
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 50052

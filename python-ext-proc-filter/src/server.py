@@ -15,26 +15,43 @@ from envoy.type.v3 import http_status_pb2 as http_status_pb2
 # plugin manager
 import sys
 import json
-sys.path.append("/app/apex")
-
+# sys.path.append("/app/apex")
+import os
 # First-Party
 #from apex.mcp.entities.models import HookType, Message, PromptResult, Role, TextContent, PromptPosthookPayload, PromptPrehookPayload
-import apex.mcp.entities.models as apex
-from apex.framework.manager import PluginManager
-from apex.framework.models import GlobalContext
-from plugins.regex_filter.search_replace import SearchReplaceConfig
+# import apex.mcp.entities.models as apex
+# import mcpgateway.plugins.tools.models as apex
+from mcpgateway.plugins.framework import PromptHookType, ToolHookType,  HttpHeaderPayload,  PromptPosthookPayload, PromptPrehookPayload, ToolPostInvokePayload, ToolPreInvokePayload
+from mcpgateway.plugins.framework import PluginManager
+from mcpgateway.plugins.framework.models import GlobalContext
+# from apex.framework.manager import PluginManager
+#from apex.framework.models import GlobalContext
+# from plugins.regex_filter.search_replace import SearchReplaceConfig
 
 
-logging.basicConfig(level=logging.INFO)
+
+logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
 logger = logging.getLogger("ext-proc-PM")
+# logger.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler()
+handler.setLevel(os.environ.get('LOGLEVEL', 'INFO').upper()) 
+
+# Add the handler to the logger
+logger.addHandler(handler)
+
 
 async def getToolPostInvokeResponse(body):
     #FIXME: size of content array is expected to be 1
     #for content in body["result"]["content"]:
-    payload = apex.ToolPostInvokePayload(name="replaceme", result = body)
+
+    logger.debug("**** Tool Post Invoke ****")
+    payload = ToolPostInvokePayload(name="replaceme", result = body)
     #TODO: hard-coded ids
+    logger.debug("**** Tool Post Invoke result ****")
+    logger.deub(payload)
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.invoke_hook(apex.HookType.TOOL_POST_INVOKE, payload, global_context=global_context)
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_POST_INVOKE, payload, global_context=global_context)
     logger.info(result)
     if not result.continue_processing:
         body_resp = ep.ProcessingResponse(
@@ -45,7 +62,11 @@ async def getToolPostInvokeResponse(body):
             )
         )
     else:
-        body = result.modified_payload.result
+        result_payload = result.modified_payload
+        if result_payload is not None:
+            body = result_payload.result
+        else:
+            body = None
         body_resp = ep.ProcessingResponse(
             request_body=ep.BodyResponse(
                 response=ep.CommonResponse(
@@ -58,10 +79,12 @@ async def getToolPostInvokeResponse(body):
     return body_resp
 
 async def getToolPreInvokeResponse(body):
-    payload = apex.ToolPreInvokePayload(name=body["params"]["name"], args = body["params"]["arguments"])
+    payload = ToolPreInvokePayload(name=body["params"]["name"], args = body["params"]["arguments"])
     #TODO: hard-coded ids
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.invoke_hook(apex.HookType.TOOL_PRE_INVOKE, payload, global_context=global_context)
+    logger.debug("**** Invoking Tool Pre Invoke ****")
+    result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload, global_context=global_context)
+    logger.debug("**** Tool Pre Invoke Result ****")
     logger.info(result)
     if not result.continue_processing:
         body_resp = ep.ProcessingResponse(
@@ -71,7 +94,14 @@ async def getToolPreInvokeResponse(body):
             )
         )
     else:
-        body["params"]["arguments"] = result.modified_payload.args
+        logger.debug(result)
+        print(result)
+        result_payload = result.modified_payload
+        if result_payload is not None:
+            body["params"]["arguments"] = result_payload.args
+        else:
+            body["params"]["arguments"] = None
+
         body_resp = ep.ProcessingResponse(
             request_body=ep.BodyResponse(
                 response=ep.CommonResponse(
@@ -84,10 +114,10 @@ async def getToolPreInvokeResponse(body):
     return body_resp
 
 async def getPromptPreFetchResponse(body):
-    prompt = apex.PromptPrehookPayload(name=body["params"]["name"], args = body["params"]["arguments"])
+    prompt = PromptPrehookPayload(name=body["params"]["name"], args = body["params"]["arguments"])
     #TODO: hard-coded ids
     global_context = GlobalContext(request_id="1", server_id="2")
-    result, contexts = await manager.invoke_hook(apex.HookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
+    result, contexts = await manager.invoke_hook(ToolHookType.PROMPT_PRE_FETCH, prompt, global_context=global_context)
     logger.info(result)
     if not result.continue_processing:
         body_resp = ep.ProcessingResponse(
@@ -230,8 +260,10 @@ async def serve(host: str = "0.0.0.0", port: int = 50052):
 
 if __name__ == "__main__":
     try:
+        logging.getLogger("mcpgateway.config").setLevel(logging.DEBUG)
+        logging.getLogger("mcpgateway.observability").setLevel(logging.DEBUG)
         logger.info("Manager main")
-        manager = PluginManager("./apex/resources/config/config.yaml")
+        manager = PluginManager("./resources/config/config.yaml")
         asyncio.run(serve())
         #serve()
     except KeyboardInterrupt:
