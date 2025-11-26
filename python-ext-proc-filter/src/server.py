@@ -28,17 +28,17 @@ from mcpgateway.plugins.framework.models import GlobalContext
 #from apex.framework.models import GlobalContext
 # from plugins.regex_filter.search_replace import SearchReplaceConfig
 
+log_level = os.environ.get('LOGLEVEL', 'INFO').upper()
 
-
-logging.basicConfig(level=os.environ.get('LOGLEVEL', 'INFO').upper())
+logging.basicConfig(level=log_level)
 logger = logging.getLogger("ext-proc-PM")
-# logger.setLevel(logging.DEBUG)
+logger.setLevel(log_level)
 
-handler = logging.StreamHandler()
-handler.setLevel(os.environ.get('LOGLEVEL', 'INFO').upper()) 
+# handler = logging.StreamHandler()
+# handler.setLevel(log_level)
 
-# Add the handler to the logger
-logger.addHandler(handler)
+# # Add the handler to the logger
+# logger.addHandler(handler)
 
 
 async def getToolPostInvokeResponse(body):
@@ -79,10 +79,16 @@ async def getToolPostInvokeResponse(body):
     return body_resp
 
 async def getToolPreInvokeResponse(body):
-    payload = ToolPreInvokePayload(name=body["params"]["name"], args = body["params"]["arguments"])
+    logger.debug(body)
+    payload_args = { "tool_name": body["params"]['name'],
+                    "tool_args": body["params"]["arguments"],
+                    "session_id": "replaceme"
+                    }
+    payload = ToolPreInvokePayload(name=body["params"]["name"], args = payload_args)
     #TODO: hard-coded ids
     global_context = GlobalContext(request_id="1", server_id="2")
-    logger.debug("**** Invoking Tool Pre Invoke ****")
+    logger.debug("**** Invoking Tool Pre Invoke with payload ****")
+    logger.debug(payload)
     result, contexts = await manager.invoke_hook(ToolHookType.TOOL_PRE_INVOKE, payload, global_context=global_context)
     logger.debug("**** Tool Pre Invoke Result ****")
     logger.info(result)
@@ -97,10 +103,10 @@ async def getToolPreInvokeResponse(body):
         logger.debug(result)
         print(result)
         result_payload = result.modified_payload
-        if result_payload is not None:
+        if result_payload is not None and result_payload.args is not None: 
             body["params"]["arguments"] = result_payload.args
-        else:
-            body["params"]["arguments"] = None
+        # else:
+        #     body["params"]["arguments"] = None
 
         body_resp = ep.ProcessingResponse(
             request_body=ep.BodyResponse(
@@ -111,6 +117,8 @@ async def getToolPreInvokeResponse(body):
                 )
             )
         )
+    logger.info("****Tool Pre Invoke Return body****")
+    logger.info(body_resp)
     return body_resp
 
 async def getPromptPreFetchResponse(body):
@@ -137,6 +145,8 @@ async def getPromptPreFetchResponse(body):
                 )
             )
         )
+    logger.info("****body ")
+    logger.info(body_resp)
     return body_resp
 
 class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
@@ -145,7 +155,7 @@ class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
         resp_body_buf = bytearray()
 
         async for request in request_iterator:
-            logger.info(request)
+            # logger.info(request)
             if request.HasField("request_headers"):
                 # Modify request headers
                 headers = request.request_headers.headers
@@ -245,8 +255,8 @@ class ExtProcServicer(ep_grpc.ExternalProcessorServicer):
                 logger.warn("Not processed")
 
 async def serve(host: str = "0.0.0.0", port: int = 50052):
-    logger.info(manager.config)
     await manager.initialize()
+    logger.info(manager.config)
 
     server = grpc.aio.server()
     #server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
@@ -263,7 +273,8 @@ if __name__ == "__main__":
         logging.getLogger("mcpgateway.config").setLevel(logging.DEBUG)
         logging.getLogger("mcpgateway.observability").setLevel(logging.DEBUG)
         logger.info("Manager main")
-        manager = PluginManager("./resources/config/config.yaml")
+        pm_config = os.environ.get('PLUGIN_MANAGER_CONFIG', './resources/config/config.yaml')
+        manager = PluginManager(pm_config)
         asyncio.run(serve())
         #serve()
     except KeyboardInterrupt:

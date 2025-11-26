@@ -16,8 +16,10 @@ WORKDIR /app
 # Copy Python dependencies and source
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
+RUN mkdir resources
 COPY src/ ./
 
+COPY resources ./resources/
 # RUN cd apex && uv pip install -r pyproject.toml --system
 # RUN cd apex && uv pip install . --system
 

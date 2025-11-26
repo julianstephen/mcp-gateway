@@ -15,6 +15,10 @@ log:
 exec:
 	kubectl exec -ti ${podname} -n istio-system -- bash
 
+deploy:
+	kubectl delete -f ext-proc.yaml
+	kubectl apply -f ext-proc.yaml
+
 all: build load
 	kubectl delete -f ext-proc.yaml
 	kubectl apply -f ext-proc.yaml

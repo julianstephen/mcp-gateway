@@ -40,5 +40,7 @@ spec:
               value: "0.0.0.0"
             - name: LOGLEVEL
               value: "DEBUG"
+            - name: PLUGIN_MANAGER_CONFIG
+              value: "./resources/config/config.yaml"
           ports:
             - containerPort: 50052
