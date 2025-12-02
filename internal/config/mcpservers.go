@@ -3,6 +3,7 @@ package config
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
@@ -14,6 +15,10 @@ type MCPServersConfig struct {
 	Servers        []*MCPServer
 	VirtualServers []*VirtualServer
 	observers      []Observer
+	//MCPGatewayExternalHostname is the accessible host of the gateway listener
+	MCPGatewayExternalHostname string
+	MCPGatewayInternalHostname string
+	RouterAPIKey               string
 }
 
 // RegisterObserver registers an observer to be notified of changes to the config
@@ -22,9 +27,12 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 }
 
 // Notify notifies registered observers of config changes
-func (config *MCPServersConfig) Notify(ctx context.Context) {
+func (config *MCPServersConfig) Notify() {
+	//TODO figure out this context as it can't be a request context that gets cancelled before it has finished its work
+	// currently it is never cancelled
+	ctx := context.Background()
 	for _, observer := range config.observers {
-		observer.OnConfigChange(ctx, config)
+		go observer.OnConfigChange(ctx, config)
 	}
 }
 
@@ -63,6 +71,16 @@ func (config *MCPServersConfig) GetServerInfo(toolName string) *MCPServer {
 	return nil
 }
 
+// GetServerConfigByName get the routing config by server name
+func (config *MCPServersConfig) GetServerConfigByName(serverName string) *MCPServer {
+	for _, server := range config.Servers {
+		if server.Name == serverName {
+			return server
+		}
+	}
+	return nil
+}
+
 // MCPServer represents a server
 type MCPServer struct {
 	Name             string
@@ -71,6 +89,19 @@ type MCPServer struct {
 	Enabled          bool
 	Hostname         string
 	CredentialEnvVar string // env var name for auth
+}
+
+// ID returns a unique id for the a registered server
+func (mcpServer *MCPServer) ID() string {
+	return fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.ToolPrefix, mcpServer.URL)
+}
+
+// ConfigChanged checks if a servers config has changed
+func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
+	return existingConfig.Name != mcpServer.Name ||
+		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
+		existingConfig.Hostname != mcpServer.Hostname ||
+		existingConfig.CredentialEnvVar != mcpServer.CredentialEnvVar
 }
 
 // Path returns the path part of the mcp url

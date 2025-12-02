@@ -29,11 +29,11 @@ nodes:
       kubeletExtraArgs:
         node-labels: "ingress-ready=true"
   extraPortMappings:
-  - containerPort: 80
-    hostPort: 8080
+  - containerPort: 30080
+    hostPort: 7001
     protocol: TCP
-  - containerPort: 443
-    hostPort: 8443
+  - containerPort: 30089
+    hostPort: 7002
     protocol: TCP
 EOF
 
@@ -46,6 +46,7 @@ helm install istiod istio/istiod -n istio-system --wait
 
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/namespace.yaml
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/gateway.yaml -n gateway-system
+kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/istio/gateway/nodeport.yaml -n gateway-system
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/namespace.yaml
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-deployment.yaml -n mcp-test
 kubectl apply -f https://raw.githubusercontent.com/$GITHUB_ORG/mcp-gateway/$BRANCH/config/test-servers/server1-service.yaml -n mcp-test
@@ -116,10 +117,6 @@ kubectl wait --for=condition=available --timeout=300s deployment/mcp-gateway-con
 echo "Waiting for Istio gateway pod to be ready..."
 kubectl wait --for=condition=ready --timeout=300s pod -l istio=ingressgateway -n gateway-system
 
-echo "Starting port forwarding..."
-kubectl -n gateway-system port-forward svc/mcp-gateway-istio 8888:8080 8889:8889 &
-PORT_FORWARD_PID=$!
-
 echo "Starting MCP inspector..."
 MCP_AUTO_OPEN_ENABLED=false DANGEROUSLY_OMIT_AUTH=true npx @modelcontextprotocol/inspector@latest &
 INSPECTOR_PID=$!
@@ -129,24 +126,22 @@ sleep 3
 echo "================================================================"
 echo "Setup complete! 🎉"
 echo "================================================================"
-echo "Port forwarding: kubectl port-forward active (PID: $PORT_FORWARD_PID)"
 echo "MCP Inspector: http://localhost:6274"
-echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:8888/mcp"
+echo "Gateway URL: http://mcp.127-0-0-1.sslip.io:7001/mcp"
 echo ""
 echo "Check status:"
 echo "  kubectl get pods -n mcp-system"
 echo "  kubectl get pods -n istio-system"
 echo "  kubectl get httproute -n mcp-system"
 echo ""
-echo "Press Ctrl+C to stop port forwarding and cleanup."
+echo "Press Ctrl+C to stop and cleanup."
 echo "================================================================"
 
-open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:8888/mcp" 2>/dev/null || echo "Open manually: http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:8888/mcp"
+open "http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:7001/mcp" 2>/dev/null || echo "Open manually: http://localhost:6274/?transport=streamable-http&serverUrl=http://mcp.127-0-0-1.sslip.io:7001/mcp"
 
 # Cleanup function
 cleanup() {
     echo "Cleaning up..."
-    kill $PORT_FORWARD_PID 2>/dev/null || true
     kill $INSPECTOR_PID 2>/dev/null || true
     exit 0
 }

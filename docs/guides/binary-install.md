@@ -72,11 +72,16 @@ Save this as `config/servers.yaml` or any location you prefer.
 
 ```bash
 # Run with your configuration
-./bin/mcp-broker-router --config=config/servers.yaml --log-level=-4
+./bin/mcp-broker-router \
+  --config=config/servers.yaml \
+  --mcp-gateway-public-host=your-hostname.example.com \
+  --log-level=-4
 ```
 
 **Command Options**:
 - `--config`: Path to your YAML configuration file
+- `--mcp-gateway-public-host`: **Required** - Public hostname for MCP Gateway (must match your Gateway listener hostname)
+- `--mcp-router-address`: Address for gRPC router (default: `0.0.0.0:50051`)
 - `--log-level`: Logging verbosity
   - `-4`: Debug (verbose)
   - `0`: Info (default)
@@ -127,7 +132,7 @@ static_resources:
                 request_header_mode: SEND
                 response_header_mode: SEND
                 request_body_mode: BUFFERED
-                response_body_mode: BUFFERED
+                response_body_mode: NONE
           - name: envoy.filters.http.router
 
   clusters:
@@ -175,7 +180,7 @@ curl http://localhost:8080/health
 # Test through Envoy proxy
 curl http://localhost:8888/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}'
+  -d '{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "1.0"}}}'
 
 # List available tools
 curl -X POST http://localhost:8888/mcp \

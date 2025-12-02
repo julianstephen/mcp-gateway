@@ -32,6 +32,12 @@ spec:
         from: All
 ```
 
+> **Important:** If you installed MCP Gateway using Helm, ensure the `gateway.publicHost` value in your Helm values matches the hostname above. For example:
+> ```bash
+> helm upgrade mcp-gateway oci://ghcr.io/kagenti/charts/mcp-gateway \
+>   --set gateway.publicHost=mcp.127-0-0-1.sslip.io
+> ```
+
 ## Step 2: Create HTTPRoute
 
 Create an HTTPRoute to route MCP traffic to the broker:
@@ -127,7 +133,7 @@ spec:
               request_header_mode: SEND
               response_header_mode: SEND
               request_body_mode: BUFFERED
-              response_body_mode: BUFFERED
+              response_body_mode: NONE
               request_trailer_mode: SKIP
               response_trailer_mode: SKIP
             grpc_service:

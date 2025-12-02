@@ -108,6 +108,12 @@ deploy-broker: install-crd ## Deploy only the broker/router (without controller)
 	kubectl apply -f config/mcp-system/deployment-broker.yaml
 	kubectl apply -k config/mcp-system/ --dry-run=client -o yaml | kubectl apply -f - -l app=mcp-gateway
 
+.PHONY: configure-redis
+configure-redis:  ## patch deployment with redis connection
+	kubectl apply -f config/mcp-system/redis-deployment.yaml
+	kubectl apply -f config/mcp-system/redis-service.yaml
+	kubectl patch deployment mcp-broker-router -n mcp-system --patch-file config/mcp-system/deployment-controller-redis-patch.yaml
+
 # Deploy only the controller
 deploy-controller: install-crd ## Deploy only the controller
 	kubectl apply -f config/mcp-system/namespace.yaml
@@ -125,11 +131,18 @@ define load-image
 endef
 
 .PHONY: build-and-load-image
-build-and-load-image: kind ## Build & load router/broker/controller image into the Kind cluster
+build-and-load-image: kind build-image load-image  ## Build & load router/broker/controller image into the Kind cluster and restart
 	@echo "Building and loading image into Kind cluster..."
-	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway:latest .
-	$(call load-image,ghcr.io/kagenti/mcp-gateway:latest)
 	kubectl rollout restart deployment/mcp-broker-router -n mcp-system 2>/dev/null || true
+	kubectl rollout restart deployment/mcp-controller -n mcp-system 2>/dev/null || true
+
+.PHONY: load-image
+load-image: kind ## Load the mcp-gateway image into the kind cluster
+	$(call load-image,ghcr.io/kagenti/mcp-gateway:latest)	
+
+.PHONY: build-image
+build-image: kind ## Build the mcp-gateway image
+	$(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway:latest .
 
 # Deploy example MCPServer
 deploy-example: install-crd ## Deploy example MCPServer resource
@@ -140,6 +153,8 @@ deploy-example: install-crd ## Deploy example MCPServer resource
 	@kubectl wait --for=condition=ready pod -n mcp-test -l app=mcp-api-key-server --timeout=60s
 	@kubectl wait --for=condition=ready pod -n mcp-test -l app=mcp-custom-path-server --timeout=60s 2>/dev/null || true
 	@kubectl wait --for=condition=ready pod -n mcp-test -l app=mcp-oidc-server --timeout=60s
+	@kubectl wait --for=condition=ready pod -n mcp-test -l app=everything-server --timeout=60s
+	@kubectl wait --for=condition=ready pod -n mcp-test -l app=mcp-custom-response --timeout=60s
 	@echo "All test servers ready, deploying MCPServer resources..."
 	kubectl apply -f config/samples/mcpserver-test-servers.yaml
 	@echo "Waiting for controller to process MCPServer..."
@@ -158,6 +173,9 @@ build-test-servers: ## Build test server Docker images locally
 	cd tests/servers/broken-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-broken-server:latest .
 	cd tests/servers/custom-path-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-custom-path-server:latest .
 	cd tests/servers/oidc-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-oidc-server:latest .
+	cd tests/servers/everything-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/test-everything-server:latest .
+	cd tests/servers/custom-response-server && $(CONTAINER_ENGINE) build $(CONTAINER_ENGINE_EXTRA_FLAGS) -t ghcr.io/kagenti/mcp-gateway/custom-response-server:latest .	
+
 
 # Load test server images into Kind cluster
 kind-load-test-servers: kind build-test-servers ## Load test server images into Kind cluster
@@ -169,6 +187,8 @@ kind-load-test-servers: kind build-test-servers ## Load test server images into 
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-broken-server:latest)
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-custom-path-server:latest)
 	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-oidc-server:latest)
+	$(call load-image,ghcr.io/kagenti/mcp-gateway/test-everything-server:latest)
+	$(call load-image,ghcr.io/kagenti/mcp-gateway/custom-response-server:latest)
 
 # Deploy test servers
 deploy-test-servers: kind-load-test-servers ## Deploy test MCP servers for local testing
@@ -384,10 +404,6 @@ istioctl: ## Download and install istioctl
 keycloak-install: ## Install Keycloak IdP for development
 	@echo "Installing Keycloak - using official image with dev-file database"
 	@$(MAKE) -s -f build/keycloak.mk keycloak-install-impl
-
-.PHONY: keycloak-forward
-keycloak-forward: ## Port forward Keycloak to localhost:8090
-	@$(MAKE) -s -f build/keycloak.mk keycloak-forward-impl
 
 .PHONY: keycloak-status
 keycloak-status: ## Show Keycloak URLs, credentials, and OIDC endpoints
