@@ -93,6 +93,7 @@ type MCPBroker interface {
 	config.Observer
 }
 
+// TODO this probably should move to a sync.Map
 type mcpServers map[upstreamMCPID]*upstreamMCP
 
 func (mcps mcpServers) findByHost(host string) *upstreamMCP {
@@ -166,15 +167,15 @@ func NewBroker(logger *slog.Logger, opts ...func(*mcpBrokerImpl)) MCPBroker {
 
 	hooks := &server.Hooks{}
 
-	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
-		slog.Info("Client disconnected", "sessionID", session.SessionID())
-	})
-
 	// Enhanced session registration to log gateway session assignment
 	hooks.AddOnRegisterSession(func(_ context.Context, session server.ClientSession) {
 		// Note that AddOnRegisterSession is for GET, not POST, for a session.
 		// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#listening-for-messages-from-the-server
-		slog.Info("Gateway client connected with session", "gatewaySessionID", session.SessionID())
+		slog.Info("Gateway client session connected with session", "gatewaySessionID", session.SessionID())
+	})
+
+	hooks.AddOnUnregisterSession(func(_ context.Context, session server.ClientSession) {
+		slog.Info("Gateway client session unregister ", "gatewaySessionID", session.SessionID())
 	})
 
 	hooks.AddBeforeAny(func(_ context.Context, _ any, method mcp.MCPMethod, _ any) {
@@ -218,6 +219,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 	discoveredTools := []mcp.Tool{}
 	for _, mcpServer := range conf.Servers {
 		m.logger.Info("Registering Server ", "mcpID", mcpServer.ID())
+
 		tools, err := m.RegisterServerWithConfig(ctx, mcpServer)
 		if err != nil {
 			slog.Warn("Could not register upstream MCP", "upstream", mcpServer.URL, "name", mcpServer.Name, "error", err)
@@ -237,6 +239,7 @@ func (m *mcpBrokerImpl) OnConfigChange(ctx context.Context, conf *config.MCPServ
 // RegisterServerWithConfig registers an MCP server with full config
 func (m *mcpBrokerImpl) RegisterServerWithConfig(ctx context.Context, mcpServer *config.MCPServer) ([]mcp.Tool, error) {
 	credentialValueChanged := false
+	m.logger.Debug("registering server ", "mcpID", mcpServer.ID(), "credential env", mcpServer.CredentialEnvVar)
 	credential, err := credentials.Get(mcpServer.CredentialEnvVar)
 	if err != nil {
 		// only log this for now and allow it to go in to the back off in register tools
@@ -256,7 +259,7 @@ func (m *mcpBrokerImpl) RegisterServerWithConfig(ctx context.Context, mcpServer 
 		}
 		configChanged := mcpServer.ConfigChanged(existingUpstream.MCPServer)
 		if !configChanged && !credentialValueChanged {
-			m.logger.Debug("mcp server is already registered and upto date", "server ", mcpServer.ID())
+			m.logger.Debug("mcp server is already registered and up to date", "server ", mcpServer.ID())
 			return nil, nil
 		}
 		// config or credentials changed, unregister and re-register
@@ -282,11 +285,11 @@ func (m *mcpBrokerImpl) RegisterServerWithConfig(ctx context.Context, mcpServer 
 	// Add to map BEFORE discovering tools so createMCPClient can find it
 	m.mcpServers[upstreamMCPID(mcpServer.ID())] = upstream
 	// TODO this will block
-	newTools, err := m.discoverTools(ctx, upstream)
+	newTools, err := m.discoverTools(ctx, upstreamMCPID(mcpServer.ID()))
 	if err != nil {
-		m.logger.Info("Failed to discover tools, will retry with backoff", "mcpURL", mcpServer.URL, "error", err)
+		m.logger.Info("Failed to discover tools, will retry with backoff", "mcpID", mcpServer.ID(), "mcpURL", mcpServer.URL, "error", err)
 		// start background retry with exponential backoff
-		go m.retryDiscovery(context.Background(), upstream)
+		go m.retryDiscovery(context.Background(), upstreamMCPID(mcpServer.ID()))
 		return nil, nil // don't return error, allow partial registration
 	}
 	m.logger.Info("Discovered tools", "serverName", mcpServer.Name, "num tools", len(newTools))
@@ -297,9 +300,10 @@ func (m *mcpBrokerImpl) RegisterServerWithConfig(ctx context.Context, mcpServer 
 }
 
 func (m *mcpBrokerImpl) UnregisterServer(_ context.Context, id string) error {
+	m.logger.Info("unregistering mcp server ", "id", id)
 	upstream, ok := m.mcpServers[upstreamMCPID(id)]
 	if !ok {
-		return fmt.Errorf("unknown host")
+		return fmt.Errorf("unknown mcp server %s", id)
 	}
 
 	// only close client if it exists (might be nil if discovery failed)
@@ -353,10 +357,16 @@ func (m *mcpBrokerImpl) ToolAnnotations(tool string) (mcp.ToolAnnotation, bool) 
 }
 
 // TODO(craig) consider if these should actually just be methods om the upstream type
-func (m *mcpBrokerImpl) discoverTools(ctx context.Context, upstream *upstreamMCP, options ...transport.StreamableHTTPCOption) ([]mcp.Tool, error) {
+func (m *mcpBrokerImpl) discoverTools(ctx context.Context, mcpID upstreamMCPID, options ...transport.StreamableHTTPCOption) ([]mcp.Tool, error) {
+
+	upstream, ok := m.mcpServers[mcpID]
+
+	if !ok {
+		return nil, fmt.Errorf("discover tools failed no upstream server registered %s", mcpID)
+	}
 
 	if upstream.mcpClient == nil {
-		// TODO (craig) most of the function require an upstremMCP object
+		// TODO (craig) most of the function require an upstreamMCP object
 		// Connection mgmt shouldn't be a part of this function
 		// prob functions should just become methods of that object
 		//upstreamMCP.Connect()
@@ -364,7 +374,7 @@ func (m *mcpBrokerImpl) discoverTools(ctx context.Context, upstream *upstreamMCP
 		//upstreamMCP.Ping() etc...
 		options = append(options, transport.WithContinuousListening())
 		var resInit *mcp.InitializeResult
-		client, resInit, err := m.createMCPClient(ctx, upstream.URL, upstream.ID(), ClientTypeDiscovery, options...)
+		client, resInit, err := m.createMCPClient(ctx, upstream.ID(), ClientTypeDiscovery, options...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create streamable client: %w", err)
 		}
@@ -389,7 +399,7 @@ func (m *mcpBrokerImpl) discoverTools(ctx context.Context, upstream *upstreamMCP
 			"upstream.URL", upstream.URL,
 			"sessionID", upstream.mcpClient.GetSessionId())
 		// start background retry when connection is lost
-		go m.retryDiscovery(context.Background(), upstream)
+		go m.retryDiscovery(context.Background(), mcpID)
 	})
 
 	upstream.mcpClient.OnNotification(func(notification mcp.JSONRPCNotification) {
@@ -409,6 +419,7 @@ func (m *mcpBrokerImpl) discoverTools(ctx context.Context, upstream *upstreamMCP
 			// Add any tools added since the last notification
 			if len(newlyAddedTools) > 0 {
 				m.logger.Info("OnNotification Adding tools", "mcpURL", upstream.URL, "#tools", len(newlyAddedTools))
+				//NOTE this sends a notification to connected clients
 				m.listeningMCPServer.AddTools(toolsToServerTools(newlyAddedTools)...)
 			}
 
@@ -461,20 +472,26 @@ func ConfigureBackOff() wait.Backoff {
 }
 
 // retryDiscovery attempts to discover tools with exponential backoff
-func (m *mcpBrokerImpl) retryDiscovery(ctx context.Context, upstream *upstreamMCP) {
+func (m *mcpBrokerImpl) retryDiscovery(ctx context.Context, mcpID upstreamMCPID) {
 	// configurable via env vars with sensible defaults
-
+	upstream, ok := m.mcpServers[mcpID]
+	if !ok {
+		m.logger.Info("retry: upstream has been unregistered", "id", mcpID)
+		return
+	}
 	attempt := 0
 	backOff := ConfigureBackOff()
 	err := wait.ExponentialBackoffWithContext(ctx, backOff, func(ctx context.Context) (bool, error) {
 		attempt++
 		m.logger.Info("attempting discovery",
+			"id", upstream.ID(),
 			"url", upstream.URL,
 			"attempt", attempt)
 
-		newTools, err := m.discoverTools(ctx, upstream)
+		newTools, err := m.discoverTools(ctx, mcpID)
 		if err != nil {
 			m.logger.Warn("retry discovery failed",
+				"id", upstream.ID(),
 				"url", upstream.URL,
 				"attempt", attempt,
 				"error", err)
@@ -482,6 +499,7 @@ func (m *mcpBrokerImpl) retryDiscovery(ctx context.Context, upstream *upstreamMC
 		}
 
 		m.logger.Info("retry discovery succeeded",
+			"id", upstream.ID(),
 			"url", upstream.URL,
 			"attempt", attempt,
 			"tools", len(newTools))
@@ -492,11 +510,13 @@ func (m *mcpBrokerImpl) retryDiscovery(ctx context.Context, upstream *upstreamMC
 	if err != nil {
 		if wait.Interrupted(err) {
 			m.logger.Error("max retries exceeded for discovery",
+				"id", upstream.ID(),
 				"url", upstream.URL,
 				"maxRetries", backOff.Steps,
 				"error", err)
 		} else {
 			m.logger.Info("retry discovery cancelled",
+				"id", upstream.ID(),
 				"url", upstream.URL,
 				"error", err)
 		}
@@ -586,7 +606,7 @@ func (m *mcpBrokerImpl) HandleStatusRequest(w http.ResponseWriter, r *http.Reque
 }
 
 // createMCPClient creates and initializes an MCP client with the appropriate configuration
-func (m *mcpBrokerImpl) createMCPClient(ctx context.Context, mcpURL, id string, clientType ClientType, options ...transport.StreamableHTTPCOption) (*client.Client, *mcp.InitializeResult, error) {
+func (m *mcpBrokerImpl) createMCPClient(ctx context.Context, id string, clientType ClientType, options ...transport.StreamableHTTPCOption) (*client.Client, *mcp.InitializeResult, error) {
 	// Look up the actual upstream config to get CredentialEnvVar
 	upstream, found := m.mcpServers[upstreamMCPID(id)]
 	if !found {
@@ -594,7 +614,7 @@ func (m *mcpBrokerImpl) createMCPClient(ctx context.Context, mcpURL, id string, 
 	}
 
 	// Use the registered upstream with its CredentialEnvVar
-	authHeader, err := getAuthorizationHeaderForUpstream(upstream)
+	authHeader, err := m.getAuthorizationHeaderForUpstream(upstream)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -604,7 +624,7 @@ func (m *mcpBrokerImpl) createMCPClient(ctx context.Context, mcpURL, id string, 
 		}))
 	}
 
-	httpClient, err := client.NewStreamableHttpClient(mcpURL, options...)
+	httpClient, err := client.NewStreamableHttpClient(upstream.URL, options...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to create client: %w", err)
 	}
@@ -658,9 +678,10 @@ func (m *mcpBrokerImpl) createMCPClient(ctx context.Context, mcpURL, id string, 
 }
 
 // Get the authorization header needed for a particular MCP upstream
-func getAuthorizationHeaderForUpstream(upstream *upstreamMCP) (string, error) {
+func (m *mcpBrokerImpl) getAuthorizationHeaderForUpstream(upstream *upstreamMCP) (string, error) {
 	// We don't store the authorization in the config.yaml, which comes from a ConfigMap.
 	// Instead it is passed to the Broker pod through env vars (typically from Secrets)
+	m.logger.Debug("getAuthorizationHeaderForUpstream", "upstream", upstream.ID(), "credential env", upstream.CredentialEnvVar)
 	var credName string
 	if upstream.CredentialValue != "" {
 		return upstream.CredentialValue, nil
@@ -699,7 +720,7 @@ func toolsToServerTools(newTools []mcp.Tool) []server.ServerTool {
 // validateMCPServer validates a single MCP server using existing session data
 func (m *mcpBrokerImpl) validateMCPServer(_ context.Context, mcpID, name, toolPrefix string) ServerValidationStatus {
 	// Use already-discovered data for registered servers
-	m.logger.Debug("validateMCPServer: validating MCPServer ", "servername", name)
+	m.logger.Debug("validateMCPServer: validating MCPServer", "servername", name)
 	upstream, exists := m.mcpServers[upstreamMCPID(mcpID)]
 	if !exists {
 		m.logger.Warn("Server validation failed: server not registered", "id", mcpID, "name", name)
@@ -713,7 +734,7 @@ func (m *mcpBrokerImpl) validateMCPServer(_ context.Context, mcpID, name, toolPr
 			},
 		}
 	}
-	m.logger.Debug("validateMCPServer: checking MCPServer connection status ", "servername", name)
+	m.logger.Debug("validateMCPServer: checking MCPServer connection status", "servername", name)
 	connectionStatus := m.checkSessionHealth(upstream)
 
 	var protocolValidation ProtocolValidation
@@ -782,7 +803,7 @@ func (m *mcpBrokerImpl) validateServerConnectivity(upstream *upstreamMCP) Connec
 	defer cancel()
 
 	// Create a temporary client just for validation
-	client, _, err := m.createMCPClient(ctx, upstream.URL, upstream.Name, ClientTypeValidation)
+	client, _, err := m.createMCPClient(ctx, upstream.ID(), ClientTypeValidation)
 	if err != nil {
 		return ConnectionStatus{
 			IsReachable: false,

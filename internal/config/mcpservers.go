@@ -27,10 +27,7 @@ func (config *MCPServersConfig) RegisterObserver(obs Observer) {
 }
 
 // Notify notifies registered observers of config changes
-func (config *MCPServersConfig) Notify() {
-	//TODO figure out this context as it can't be a request context that gets cancelled before it has finished its work
-	// currently it is never cancelled
-	ctx := context.Background()
+func (config *MCPServersConfig) Notify(ctx context.Context) {
 	for _, observer := range config.observers {
 		go observer.OnConfigChange(ctx, config)
 	}
@@ -96,7 +93,8 @@ func (mcpServer *MCPServer) ID() string {
 	return fmt.Sprintf("%s:%s:%s", mcpServer.Name, mcpServer.ToolPrefix, mcpServer.URL)
 }
 
-// ConfigChanged checks if a servers config has changed
+// ConfigChanged checks if a server's config has changed in a way that will affect the gateway.
+// This means having a different name, prefix, hostname, or credential variable.
 func (mcpServer *MCPServer) ConfigChanged(existingConfig MCPServer) bool {
 	return existingConfig.Name != mcpServer.Name ||
 		existingConfig.ToolPrefix != mcpServer.ToolPrefix ||
