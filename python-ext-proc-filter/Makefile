@@ -1,4 +1,4 @@
-.PHONY: build load all
+.PHONY: build load all deploy exec log
 
 # Build the combined broker and router 
 build:
@@ -18,7 +18,7 @@ exec:
 deploy:
 	kubectl delete -f ext-proc.yaml
 	kubectl apply -f ext-proc.yaml
+	kubectl apply -f filter.yaml
 
-all: build load
-	kubectl delete -f ext-proc.yaml
-	kubectl apply -f ext-proc.yaml
+all: build load deploy
+	@echo "All done!"
